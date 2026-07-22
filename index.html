@@ -502,9 +502,8 @@ async function fetchUrl(url) {
     }
 }
 
-// 并发池调度器
+// 并发池调度器 —— 修复：实时写入 allResults 并刷新表格
 async function runWithConcurrency(tasks, concurrency, worker) {
-    const results = new Array(tasks.length);
     let index = 0;
 
     async function workerLoop() {
@@ -512,18 +511,23 @@ async function runWithConcurrency(tasks, concurrency, worker) {
             const currentIndex = index++;
             const task = tasks[currentIndex];
             const result = await worker(task, currentIndex);
-            results[currentIndex] = result;
+            
+            // 【关键修复】每完成一条就写入全局数组
+            result.index = currentIndex + 1;
+            allResults[currentIndex] = result;
             
             // 更新进度
             completedCount++;
             updateProgress();
+            
+            // 【关键修复】实时刷新表格可视化
+            renderTable();
         }
     }
 
     // 启动指定数量的并发 worker
     const workers = Array.from({ length: concurrency }, () => workerLoop());
     await Promise.all(workers);
-    return results;
 }
 
 // 更新进度条和统计
@@ -560,7 +564,10 @@ function goToPage(page) {
 
 // 渲染表格（分页）
 function renderTable() {
-    if (allResults.length === 0) {
+    // 过滤掉未完成的空位（并发过程中数组可能存在空洞）
+    const validResults = allResults.filter(item => item !== undefined && item !== null);
+    
+    if (validResults.length === 0) {
         resultBody.innerHTML = `<tr><td colspan="5" class="empty-tip">${i18n[currentLang].emptyTip}</td></tr>`;
         downloadBtn.disabled = true;
         updatePaginationInfo();
@@ -570,7 +577,7 @@ function renderTable() {
     downloadBtn.disabled = false;
 
     // 排序
-    const sorted = [...allResults].sort((a, b) => {
+    const sorted = [...validResults].sort((a, b) => {
         const col = currentSort.col;
         let va = a[col];
         let vb = b[col];
@@ -631,12 +638,13 @@ function escapeCSV(str) {
 
 // 导出CSV
 function exportToCSV() {
-    if (allResults.length === 0) return;
+    const validResults = allResults.filter(item => item !== undefined && item !== null);
+    if (validResults.length === 0) return;
     
     const dict = i18n[currentLang];
     const headers = [dict.colIndex, dict.colUrl, dict.colLength, dict.colTitle, dict.colContent];
     
-    const rows = allResults.map(item => [
+    const rows = validResults.map(item => [
         item.index,
         item.url,
         item.length,
@@ -721,7 +729,7 @@ runBtn.addEventListener('click', async () => {
 
     totalCount = urls.length;
     completedCount = 0;
-    allResults = [];
+    allResults = new Array(totalCount); // 预分配数组空间
     currentPage = 1;
     
     runBtn.disabled = true;
@@ -729,16 +737,13 @@ runBtn.addEventListener('click', async () => {
     progressBar.classList.add('active');
     statsEl.textContent = tpl(i18n[currentLang].statsPreparing, { total: totalCount });
 
-    // 并发执行
-    allResults = await runWithConcurrency(urls, concurrency, async (url, idx) => {
-        const result = await fetchUrl(url);
-        result.index = idx + 1;
-        renderTable(); // 实时刷新表格
-        return result;
+    // 并发执行（内部已实时刷新表格）
+    await runWithConcurrency(urls, concurrency, async (url, idx) => {
+        return await fetchUrl(url);
     });
 
     runBtn.disabled = false;
-    const successCount = allResults.filter(r => r.ok).length;
+    const successCount = allResults.filter(r => r && r.ok).length;
     statsEl.textContent = tpl(i18n[currentLang].statsComplete, {
         success: successCount,
         total: totalCount
