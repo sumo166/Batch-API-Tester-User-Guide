@@ -1,6 +1,8 @@
 ## 中文使用说明
 
-# 批量接口拼接与请求测试工具 使用说明
+# 批量接口拼接与请求测试工具
+# https://sumo166.github.io/Batch-API-Tester-User-Guide/
+#使用说明
 
 ## 一、工具概述
 
